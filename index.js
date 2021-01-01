@@ -171,6 +171,9 @@ function draw () {
 	if (ui.ctl === 'len') len = rev(len);
 	process.stdout.write(' ' + len)
 
+	// TODO
+	process.stdout.write('\n add     del');
+
 	if (ui.mode !== 'ctl') { process.stdout.write(dimoff); }
 }
 
