@@ -237,7 +237,7 @@ function degHandler (k) {
 }
 
 function qltHandler (k) {
-	const qualities = ',m,5,7,o'.split(',');
+	const qualities = [''].concat(QUALITIES);
 	const chord = parseChord(patch.progression[ui.progressionIndex]);
 	const newQlt = select(chord.qlt, qualities, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 
@@ -269,8 +269,26 @@ function lenHandler (k) {
 	patch.length = select(patch.length, lengths, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 }
 
+const QUALITIES = [
+	'M', // major
+	'm', // minor
+	'+', // augmented
+	'o', // diminished
+	'7', // dominant seventh
+	'M7', // major seventh
+	'mM7', // minor/major seventh
+	'm7', // minor seventh
+	'maj7#5', // augmented-major seventh or major seventh sharp five
+	'+7', // augmented seventh
+	'm7b5', // half-diminished seventh or minor seventh flat five
+	'o7', // diminished seventh
+	'7b5', // seventh flat five
+];
+
 function parseChord (chord) {
-	const { groups } = chord.match(/^(?<deg>b?(I|II|III|IV|V|VI|VII))(?<qlt>(m|5|7|o)*)$/)
+	const qrgx = QUALITIES.map(v => v.replace('+', '\\+')).join('|');
+	const rgx = new RegExp(`^(?<deg>b?(I|II|III|IV|V|VI|VII))(?<qlt>(${qrgx})?)$`)
+	const { groups } = chord.match(rgx);
 	return groups;
 }
 
