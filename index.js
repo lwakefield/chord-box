@@ -47,60 +47,94 @@ const world = {
 	play: false,
 	tick: -1,
 	notes: [],
+	ltc: 0n,
 };
 
 const input = new midi.Input();
 const output = new midi.Output();
+const channel = 0;
 input.ignoreTypes(false, false, false);
 
+
 input.on('message', (time, msg) => {
-	if (isEqual(msg, [250])) { world.play = true; }
+	if (isEqual(msg, [250])) { world.play = true; world.tick = -1; tick(); }
 	if (isEqual(msg, [251])) { world.play = true; }
-	if (isEqual(msg, [252])) { world.play = false; }
-
-	if (isEqual(msg, [248])) {
-		if (time === 0) { world.tick = -1; }
-
-		world.tick += 1;
-
-		if (world.tick % (24 * 4 * patch.length) == 0) {
-			const progression = patch.progression;
-			const chords = Tonal.Progression.fromRomanNumerals(
-				patch.tonic,
-				progression,
-			);
-			const progressionIndex = (world.tick / (24 * 4 * patch.length)) % progression.length;
-			const chord = Tonal.Chord.get(chords[progressionIndex]);
-
-			const channel = 0;
-			for (const note of world.notes) {
-				output.sendMessage([
-					128 | channel, 
-					Tonal.Midi.toMidi(note),
-					0
-				]);
-			}
-			const chordNotes = chord.notes.map(c => `${c}${patch.octave}`);
-			world.notes = [ ...chordNotes ];
-
-			for (const note of world.notes) {
-				output.sendMessage([
-					144 | channel, 
-					Tonal.Midi.toMidi(note),
-					127
-				]);
-			}
-
-
-			draw();
+	if (isEqual(msg, [252])) {
+		world.play = false;
+		world.tick = -1;
+		for (const note of world.notes) {
+			noteoff(note, channel);
 		}
+		world.notes = [];
 	}
+
+	if(!world.play) return;
+
+	if (isEqual(msg, [248])) { tick(); }
 });
 
 console.log('Opening virtual ports...')
 input.openVirtualPort("Movement");
 output.openVirtualPort("Movement");
 console.log('Opened virtual ports')
+
+function tick () {
+	const start = process.hrtime.bigint();
+	// if (time === 0) { world.tick = -1; }
+
+	world.tick += 1;
+
+	if ((world.tick % (24 * 4 * patch.length)) === 0) {
+		const progression = patch.progression;
+		const chords = Tonal.Progression.fromRomanNumerals(
+			patch.tonic,
+			progression,
+		);
+		const progressionIndex = (world.tick / (24 * 4 * patch.length)) % progression.length;
+		const chord = Tonal.Chord.get(chords[progressionIndex]);
+
+		for (const note of world.notes) {
+			noteoff(note, channel);
+		}
+		const chordNotes = chord.notes.map(c => `${c}${patch.octave}`);
+		world.notes = [ ...chordNotes ];
+
+		for (const note of world.notes) {
+			noteon(note, 127, channel);
+		}
+
+		world.ltc = process.hrtime.bigint() - start;
+
+		draw();
+	}
+}
+
+function cleanup () {
+	for (const note of world.notes) {
+		noteoff(note, channel);
+	}
+	world.notes = [];
+	input.closePort();
+	output.closePort();
+
+	// wait a little...
+	setTimeout(() => {}, 1000);
+}
+
+function noteon (note, vel=127, channel=0) {
+	output.sendMessage([
+		144 | channel, 
+		Tonal.Midi.toMidi(note),
+		vel
+	]);
+}
+function noteoff (note, channel=0) {
+	output.sendMessage([
+		128 | channel, 
+		Tonal.Midi.toMidi(note),
+		0
+	]);
+}
 
 function draw () {
 	const chords = patch.progression;
@@ -146,6 +180,18 @@ function draw () {
 	if (ui.ctl === 'qlt') qlt = rev(qlt);
 	process.stdout.write(' ' + qlt)
 
+	// --- Inversion ---
+	let inv = 'inv: ' + (null || '-');
+	inv = inv.padEnd(7);
+	if (ui.ctl === 'inv') inv = rev(inv);
+	process.stdout.write(' ' + inv)
+
+	// --- Spread ---
+	let spr = 'spr: ' + (null || '-');
+	spr = spr.padEnd(7);
+	if (ui.ctl === 'spr') spr = rev(spr);
+	process.stdout.write(' ' + spr)
+
 	// --- Preset ---
 	let pst = 'pst: ';
 	if (patch.presetDirty) pst += '-';
@@ -159,22 +205,34 @@ function draw () {
 	if (ui.ctl === 'tnc') tnc = rev(tnc);
 	process.stdout.write('\n ' + tnc)
 
-	// -- Octave --
+	// --- Octave ---
 	let oct = 'oct: ' + patch.octave;
 	oct = oct.padEnd(7);
 	if (ui.ctl === 'oct') oct = rev(oct);
 	process.stdout.write(' ' + oct)
 
-	// -- Length --
+	// --- Length ---
 	let len = 'len: ' + patch.length;
 	len = len.padEnd(7);
 	if (ui.ctl === 'len') len = rev(len);
 	process.stdout.write(' ' + len)
 
-	// TODO
-	process.stdout.write('\n add     del');
+	// --- Add ---
+	let add = 'add'.padEnd(7);
+	if (ui.ctl === 'add') add = rev(add);
+	process.stdout.write('\n ' + add);
+
+	// --- Delete ---
+	let del = 'del'.padEnd(7);
+	if (ui.ctl === 'del') del = rev(del);
+	process.stdout.write(' ' + del);
+
 
 	if (ui.mode !== 'ctl') { process.stdout.write(dimoff); }
+
+	// --- Latency ---
+	let ltc = (`ltc: ${(Number(world.ltc) / 1_000_000).toFixed(2)}ms`);
+	process.stdout.write('\n\n' + dimon + ltc + dimoff);
 }
 
 function interactive () {
@@ -208,6 +266,18 @@ function interactive () {
 		if (ui.ctl === 'len' && k === 'k') lenHandler(key.sequence);
 		if (ui.ctl === 'len' && k === 'j') lenHandler(key.sequence);
 
+		if (ui.ctl === 'add' && k === '\r') {
+			const selected = patch.progression[ui.progressionIndex];
+			patch.progression.splice(ui.progressionIndex, 0, selected);
+			ui.progressionIndex += 1;
+		}
+
+		if (ui.ctl === 'del' && k === '\r' && patch.progression.length > 1) {
+			patch.progression.splice(ui.progressionIndex, 1);
+			ui.progressionIndex -= 1;
+			if (ui.progressionIndex < 0) ui.progressionIndex = 0
+		}
+
 		draw();
 	});
 
@@ -223,7 +293,7 @@ function progressionHandler (key) {
 }
 
 function ctlHandler (k) {
-	const ctls = 'deg,qlt,pst,tnc,oct,len'.split(',');
+	const ctls = 'deg,qlt,pst,tnc,oct,len,add,del'.split(',');
 	ui.ctl = select(ui.ctl, ctls,((k==='l'&&1) || (k==='h'&&-1) || 0));
 }
 
@@ -269,21 +339,22 @@ function lenHandler (k) {
 	patch.length = select(patch.length, lengths, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 }
 
-const QUALITIES = [
-	'M', // major
-	'm', // minor
-	'+', // augmented
-	'o', // diminished
-	'7', // dominant seventh
-	'M7', // major seventh
-	'mM7', // minor/major seventh
-	'm7', // minor seventh
-	'maj7#5', // augmented-major seventh or major seventh sharp five
-	'+7', // augmented seventh
-	'm7b5', // half-diminished seventh or minor seventh flat five
-	'o7', // diminished seventh
-	'7b5', // seventh flat five
-];
+const QUALITIES = Tonal.ChordType.symbols();
+// [
+// 	'M',      // major
+// 	'm',      // minor
+// 	'+',      // augmented
+// 	'o',      // diminished
+// 	'7',      // dominant seventh
+// 	'M7',     // major seventh
+// 	'mM7',    // minor/major seventh
+// 	'm7',     // minor seventh
+// 	'maj7#5', // augmented-major seventh or major seventh sharp five
+// 	'+7',     // augmented seventh
+// 	'm7b5',   // half-diminished seventh or minor seventh flat five
+// 	'o7',     // diminished seventh
+// 	'7b5',    // seventh flat five
+// ];
 
 function parseChord (chord) {
 	const qrgx = QUALITIES.map(v => v.replace('+', '\\+')).join('|');
