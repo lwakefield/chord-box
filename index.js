@@ -85,27 +85,61 @@ input.openVirtualPort("Movement");
 output.openVirtualPort("Movement");
 console.log('Opened virtual ports')
 
+function getTotalBeats(steps) {
+	return steps.reduce((acc, cur) => acc + cur.beats, 0);
+}
+
+function getTriggeredStep(steps, tick) {
+	const len = getTotalBeats(steps);
+	tick /= 24;
+	tick %= len;
+
+	let acc = 0;
+	for (const step of steps) {
+		if (tick === acc) return step;
+		acc += step.beats;
+	}
+
+	return null;
+}
+
+function getCurrentStep(steps, tick) {
+	return steps[getCurrentStep(steps, tick)];
+}
+
+function getCurrentStepIndex(steps, tick) {
+	const len = getTotalBeats(steps);
+	tick /= 24;
+	tick %= len;
+
+	let acc = 0;
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (tick >= acc && tick < (acc + step.beats)) return i;
+		acc += step.beats;
+	}
+
+	return null;
+}
+
 function tick () {
 	const start = process.hrtime.bigint();
 	// if (time === 0) { world.tick = -1; }
 
 	world.tick += 1;
 
-	if ((world.tick % (24 * 4 * patch.length)) === 0) {
-		const progression = patch.progression;
-		const chords = Tonal.Progression.fromRomanNumerals(
+	const step = getTriggeredStep(patch.progression, world.tick);
+	if (step) {
+		const [chord] = Tonal.Progression.fromRomanNumerals(
 			patch.tonic,
-			progression.map(({deg,qlt}) => deg),
+			[step.deg]
 		);
-		const progressionIndex = (world.tick / (24 * 4 * patch.length)) % progression.length;
-		const chord = Tonal.Chord.get(chords[progressionIndex] + progression[progressionIndex].qlt);
+		const { notes } = Tonal.Chord.get(chord + step.qlt);
 
 		for (const note of world.notes) {
 			noteoff(note, channel);
 		}
-		const chordNotes = chord.notes.map(c => `${c}${patch.octave}`);
-		world.notes = [ ...chordNotes ];
-
+		world.notes = notes.map(c => `${c}${patch.octave}`);
 		for (const note of world.notes) {
 			noteon(note, 127, channel);
 		}
@@ -143,7 +177,7 @@ function noteoff (note, channel=0) {
 
 function draw () {
 	const chords = patch.progression;
-	const currentIndex = Math.floor((world.tick / (24 * 4 * patch.length))) % chords.length;
+	const currentIndex = getCurrentStepIndex(patch.progression, world.tick);
 
 	const rev = (val) => '\x1b[7m' + val + '\033[27m';
 	const udl = (val) => '\x1b[4m' + val + '\033[24m';
@@ -185,6 +219,12 @@ function draw () {
 	if (ui.ctl === 'qlt') qlt = rev(qlt);
 	process.stdout.write(' ' + qlt)
 
+	// --- Length/Beats ---
+	let len = 'len: ' + chord.beats;
+	len = len.padEnd(7);
+	if (ui.ctl === 'len') len = rev(len);
+	process.stdout.write(' ' + len)
+
 	// --- Inversion ---
 	let inv = 'inv: ' + (null || '-');
 	inv = inv.padEnd(7);
@@ -215,12 +255,6 @@ function draw () {
 	oct = oct.padEnd(7);
 	if (ui.ctl === 'oct') oct = rev(oct);
 	process.stdout.write(' ' + oct)
-
-	// --- Length ---
-	let len = 'len: ' + patch.length;
-	len = len.padEnd(7);
-	if (ui.ctl === 'len') len = rev(len);
-	process.stdout.write(' ' + len)
 
 	// --- Add ---
 	let add = 'add'.padEnd(7);
@@ -299,7 +333,7 @@ function progressionHandler (key) {
 }
 
 function ctlHandler (k) {
-	const ctls = 'deg,qlt,pst,tnc,oct,len,add,del'.split(',');
+	const ctls = 'deg,qlt,len,pst,tnc,oct,add,del'.split(',');
 	ui.ctl = select(ui.ctl, ctls,((k==='l'&&1) || (k==='h'&&-1) || 0));
 }
 
@@ -321,6 +355,16 @@ function qltHandler (k) {
 	patch.progression[ui.progressionIndex].qlt = newQlt;
 }
 
+function lenHandler (k) {
+	const lengths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+	const beats = patch.progression[ui.progressionIndex].beats;
+	const newBeats = select(beats, lengths, ((k==='k'&&1) || (k==='j'&&-1) || 0));
+
+	patch.presetDirty = true;
+	patch.progression[ui.progressionIndex].beats = newBeats;
+}
+
+
 function pstHandler (k) {
 	patch.pstIndex += ((k==='k'&&1) || (k==='j'&&-1) || 0);
 	if (patch.pstIndex < 0) patch.pstIndex = PROGRESSION_PRESETS.length - 1;
@@ -338,11 +382,6 @@ function tncHandler (k) {
 function octHandler (k) {
 	const octaves = [0, 1, 2, 3, 4, 5, 6, 7, 8]
 	patch.octave = select(patch.octave, octaves, ((k==='k'&&1) || (k==='j'&&-1) || 0));
-}
-
-function lenHandler (k) {
-	const lengths = [1, 2, 3, 4, 5, 6, 7, 8]
-	patch.length = select(patch.length, lengths, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 }
 
 function parseChord (chord) {
