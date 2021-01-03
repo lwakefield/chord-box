@@ -2,7 +2,7 @@ const readline = require('readline');
 
 const Tonal       = require('@tonaljs/tonal');
 const midi        = require('midi');
-const { isEqual } = require('lodash');
+const { isEqual, cloneDeep } = require('lodash');
 
 
 const progressionToSteps = (p) => {
@@ -371,7 +371,7 @@ function pstHandler (k) {
 	if (patch.pstIndex >= PROGRESSION_PRESETS.length) patch.pstIndex = 0;
 
 	patch.presetDirty = false;
-	patch.progression = PROGRESSION_PRESETS[patch.pstIndex].progression;
+	patch.progression = cloneDeep(PROGRESSION_PRESETS[patch.pstIndex].progression);
 }
 
 function tncHandler (k) {
