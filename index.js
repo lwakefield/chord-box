@@ -4,7 +4,14 @@ const Tonal       = require('@tonaljs/tonal');
 const midi        = require('midi');
 const { isEqual } = require('lodash');
 
-const mkprog = (name, progression) => ({name,progression});
+
+const progressionToSteps = (p) => {
+	return p.split('-').map(c => {
+		return { ...parseChord(c), beats: 4 };
+	});
+};
+const mkprog = (name, p) => ({ name, progression:progressionToSteps(p) });
+const QUALITIES = Tonal.ChordType.symbols();
 const PROGRESSION_PRESETS = [
 	mkprog('those four chords (maj)', 'I-V-VIm-IV'),
 	mkprog('those four chords (min)', 'Im-VI-III-VII'),
@@ -24,10 +31,10 @@ const PROGRESSION_PRESETS = [
 	// mkprog('The Smooth Mover #1', 'I-I/VII-VIm-IV'),
 	// mkprog('Big-Ass Ballad', 'I-VIIom/III7-VIm-IV/V'),
 	// mkprog('The Tearjerker', 'I-I7d-bVI-bIVm'),
-	mkprog('Moody Tuesdays', 'Im-VI-IIo-V7'),
+	mkprog('Moody Tuesdays', 'Im-VI-IIdim-V7'),
 	mkprog('The Smooth Mover #2', 'VIm-bV-I-V'),
-	mkprog('The Old Timer', 'I-bIIIo-IIm-V'),
-	// mkprog('one', 'I-Io7-bIV-bIVm'),
+	mkprog('The Old Timer', 'I-bIIIdim-IIm-V'),
+	// // mkprog('one', 'I-Io7-bIV-bIVm'),
 ];
 
 const patch = {
@@ -36,7 +43,7 @@ const patch = {
 	length: 1,
 	pstIndex: 0,
 	presetDirty: false,
-	progression: PROGRESSION_PRESETS[0].progression.split('-'),
+	progression: PROGRESSION_PRESETS[0].progression,
 };
 const ui = {
 	mode: 'edit',
@@ -88,10 +95,10 @@ function tick () {
 		const progression = patch.progression;
 		const chords = Tonal.Progression.fromRomanNumerals(
 			patch.tonic,
-			progression,
+			progression.map(({deg,qlt}) => deg),
 		);
 		const progressionIndex = (world.tick / (24 * 4 * patch.length)) % progression.length;
-		const chord = Tonal.Chord.get(chords[progressionIndex]);
+		const chord = Tonal.Chord.get(chords[progressionIndex] + progression[progressionIndex].qlt);
 
 		for (const note of world.notes) {
 			noteoff(note, channel);
@@ -116,10 +123,8 @@ function cleanup () {
 	world.notes = [];
 	input.closePort();
 	output.closePort();
-
-	// wait a little...
-	setTimeout(() => {}, 1000);
 }
+process.on('exit', () => { cleanup(); });
 
 function noteon (note, vel=127, channel=0) {
 	output.sendMessage([
@@ -149,7 +154,7 @@ function draw () {
 	const dimoff = '\x1b[22m';
 
 	const chordline = chords.map((v,k) => {
-		v = v.padEnd(7, ' ');
+		v = (v.deg+v.qlt).padEnd(7, ' ');
 		if (k === currentIndex) v = udl(v);
 		if (k === ui.progressionIndex) v = rev(v);
 		return v;
@@ -164,7 +169,7 @@ function draw () {
 
 	process.stdout.write(clreol + '\n');
 
-	let chord = parseChord(patch.progression[ui.progressionIndex]);
+	let chord = patch.progression[ui.progressionIndex];
 
 	if (ui.mode !== 'ctl') { process.stdout.write(dimon); }
 
@@ -267,7 +272,8 @@ function interactive () {
 		if (ui.ctl === 'len' && k === 'j') lenHandler(key.sequence);
 
 		if (ui.ctl === 'add' && k === '\r') {
-			const selected = patch.progression[ui.progressionIndex];
+			const selected = { ...patch.progression[ui.progressionIndex] }
+
 			patch.progression.splice(ui.progressionIndex, 0, selected);
 			ui.progressionIndex += 1;
 		}
@@ -299,20 +305,20 @@ function ctlHandler (k) {
 
 function degHandler (k) {
 	const degrees = 'I,bII,II,bIII,III,bIV,IV,bV,V,bVI,VI,bVII,VII'.split(',');
-	const chord = parseChord(patch.progression[ui.progressionIndex]);
+	const chord = patch.progression[ui.progressionIndex];
 	const newDeg = select(chord.deg, degrees, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 
 	patch.presetDirty = true;
-	patch.progression[ui.progressionIndex] = newDeg + chord.qlt;
+	patch.progression[ui.progressionIndex].deg = newDeg;
 }
 
 function qltHandler (k) {
 	const qualities = [''].concat(QUALITIES);
-	const chord = parseChord(patch.progression[ui.progressionIndex]);
+	const chord = patch.progression[ui.progressionIndex];
 	const newQlt = select(chord.qlt, qualities, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 
 	patch.presetDirty = true;
-	patch.progression[ui.progressionIndex] = chord.deg + newQlt;
+	patch.progression[ui.progressionIndex].qlt = newQlt;
 }
 
 function pstHandler (k) {
@@ -321,7 +327,7 @@ function pstHandler (k) {
 	if (patch.pstIndex >= PROGRESSION_PRESETS.length) patch.pstIndex = 0;
 
 	patch.presetDirty = false;
-	patch.progression = PROGRESSION_PRESETS[patch.pstIndex].progression.split('-');
+	patch.progression = PROGRESSION_PRESETS[patch.pstIndex].progression;
 }
 
 function tncHandler (k) {
@@ -338,23 +344,6 @@ function lenHandler (k) {
 	const lengths = [1, 2, 3, 4, 5, 6, 7, 8]
 	patch.length = select(patch.length, lengths, ((k==='k'&&1) || (k==='j'&&-1) || 0));
 }
-
-const QUALITIES = Tonal.ChordType.symbols();
-// [
-// 	'M',      // major
-// 	'm',      // minor
-// 	'+',      // augmented
-// 	'o',      // diminished
-// 	'7',      // dominant seventh
-// 	'M7',     // major seventh
-// 	'mM7',    // minor/major seventh
-// 	'm7',     // minor seventh
-// 	'maj7#5', // augmented-major seventh or major seventh sharp five
-// 	'+7',     // augmented seventh
-// 	'm7b5',   // half-diminished seventh or minor seventh flat five
-// 	'o7',     // diminished seventh
-// 	'7b5',    // seventh flat five
-// ];
 
 function parseChord (chord) {
 	const qrgx = QUALITIES.map(v => v.replace('+', '\\+')).join('|');
